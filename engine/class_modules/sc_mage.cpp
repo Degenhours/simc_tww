@@ -293,6 +293,7 @@ public:
     buff_t* heat_shimmer;
     buff_t* heating_up;
     buff_t* hot_streak;
+    buff_t* fired_up;
     buff_t* pyroclasm;
 
 
@@ -906,6 +907,7 @@ public:
   bool trigger_clearcasting( double chance = 1.0, timespan_t delay = 0_ms, bool allow_predict = true );
   bool trigger_fof( double chance, proc_t* source, int stacks = 1 );
   void trigger_mana_cascade();
+  void trigger_fired_up_from_hot_streak();
   void trigger_merged_buff( buff_t* buff, bool trigger );
   void trigger_meteor_burn( action_t* action, player_t* target, timespan_t pulse_time, timespan_t duration );
   void trigger_spellfire_sphere( specialization_e m_spec, bool background = false );
@@ -2444,6 +2446,7 @@ struct hot_streak_spell_t : public custom_state_spell_t<fire_mage_spell_t, hot_s
     if ( last_hot_streak )
     {
       p()->buffs.hot_streak->decrement();
+      p()->trigger_fired_up_from_hot_streak();
       p()->buffs.pyroclasm->trigger();
 
       p()->trigger_spellfire_sphere( MAGE_FIRE );
@@ -6307,6 +6310,10 @@ void mage_t::create_buffs()
                                      ->set_trigger_spell( talents.heat_shimmer );
   buffs.heating_up               = make_buff( this, "heating_up", find_spell( 48107 ) );
   buffs.hot_streak               = make_buff( this, "hot_streak", find_spell( 48108 ) );
+  buffs.fired_up                 = make_buff( this, "fired_up", find_spell( 1257350 ) )
+                                     ->set_default_value_from_effect( 1 )
+                                     ->set_schools_from_effect( 1 )
+                                     ->set_chance( talents.fired_up_1.ok() );
   buffs.pyroclasm                = make_buff( this, "pyroclasm", find_spell( 269651 ) )
                                      ->set_default_value_from_effect( 1 )
                                      ->set_chance( talents.pyroclasm->effectN( 1 ).percent() ); // TODO: test proc chance
@@ -6648,8 +6655,18 @@ double mage_t::composite_player_multiplier( school_e school ) const
   if ( buffs.enlightened->check() && buffs.enlightened->has_common_school( school ) )
     m *= 1.0 + buffs.enlightened->check_value() * buffs.enlightened->data().effectN( 2 ).percent();
 
+  if ( school == SCHOOL_FIRE )
+  {
+    if ( talents.fired_up_2.ok() )
+      m *= 1.0 + talents.fired_up_2->effectN( 2 ).percent();
+  }
+
+  if ( buffs.fired_up && buffs.fired_up->has_common_school( school ) )
+    m *= 1.0 + buffs.fired_up->check_stack_value();
+
   return m;
 }
+
 
 double mage_t::composite_player_target_multiplier( player_t* target, school_e school ) const
 {
@@ -7011,6 +7028,35 @@ void mage_t::trigger_icicle( int count, bool grant_buff )
   state.icicles = std::min( state.icicles + count, max_icicles );
   if ( grant_buff && state.icicles == max_icicles )
     buffs.glacial_spike->trigger();
+}
+
+
+void mage_t::trigger_fired_up_from_hot_streak()
+{
+  if ( !talents.fired_up_1.ok() )
+    return;
+  
+  double proc_chance = talents.fired_up_1->effectN( 1 ).percent();
+
+  // Placeholder whenever we have data, will need to add a decrementing chance
+  constexpr double FIRED_UP_COMBUSTION_PROC_MULT = 1.0;
+
+  if ( buffs.combustion->up() )
+    proc_chance *= FIRED_UP_COMBUSTION_PROC_MULT;
+
+  proc_chance = std::min( proc_chance, 1.0 );
+
+  if ( !rng().roll( proc_chance ) )
+    return;
+
+  buffs.fired_up->trigger();
+
+  if ( buffs.combustion->up() && talents.fired_up_3.ok() )
+    buffs.combustion->extend_duration( this, talents.fired_up_3->effectN( 2 ).time_value() );
+
+  if ( talents.fired_up_2.ok() )
+    cooldowns.fire_blast->adjust( -talents.fired_up_2->effectN( 1 ).time_value(), false );
+
 }
 
 void mage_t::trigger_mana_cascade()
